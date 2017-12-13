@@ -30,4 +30,5 @@ It contains the searched and cleaned tweets and stores the initial sentiment sco
 - marvel.csv (for emoji analysis)
 
 
+*Note: The requirements.txt files specifies which libraries/packages are needed to run the code. 
 *Note: Twitter API keys/secrets/keys not provided. To test, please use your own authentication tokens.
