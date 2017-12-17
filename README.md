@@ -7,6 +7,7 @@ Shiny application:
 
 
 Report document:
+  - FinalWriteup.rmd
   - FinalWriteup.pdf 
 
 
