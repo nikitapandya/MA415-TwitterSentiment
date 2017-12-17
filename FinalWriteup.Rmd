@@ -1,0 +1,461 @@
+---
+title: "MA415 Final Project"
+author: "Nikita Pandya"
+date: "12/10/2017"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+library(shiny)
+library(shinythemes)
+library(twitteR)
+library(ROAuth)
+library(RCurl)
+library(stringr)
+library(tmap)
+library(tm)
+library(plyr)
+library(wordcloud)
+library(syuzhet)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(reshape2)
+require(tibble)
+library(dismo)
+library(maps)
+library(RgoogleMaps)
+library(ggmap)
+```
+
+```{r setup2, echo=FALSE, results="hide"}
+
+consumerKey <- ''
+  consumerSecret <- ''
+  access_token <- ''
+  access_secret <- ''
+  accessURL="https://api.twitter.com/oauth/access_token"
+  authURL="https://api.twitter.com/oauth/authorize"
+  reqURL="https://api.twitter.com/oauth/request_token"
+  
+  authenticate <- OAuthFactory$new(consumerKey=consumerKey,
+                           consumerSecret=consumerSecret,
+                           requestURL=reqURL,
+                           accessURL=accessURL,
+                           authURL=authURL)
+  
+  setup_twitter_oauth(consumerKey,consumerSecret,access_token,access_secret)
+  
+  token <- get("oauth_token", twitteR:::oauth_cache) #Save the credentials info
+  token$cache()
+  
+  save(authenticate, file="twitter authentication.Rdata")
+  load("twitter authentication.Rdata")
+  
+  name3 = "marvel"
+  username = "Marvel"
+  samplesize = 2000
+  date = toString(Sys.Date() - 5)
+  date2 = toString(Sys.Date())
+  
+  cleantweets=function(tweetname){
+    clean_tweet = gsub("&amp", "", tweetname)
+    clean_tweet = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", clean_tweet)
+    clean_tweet = gsub("@\\w+", "", clean_tweet)
+    clean_tweet = gsub("[[:punct:]]", "", clean_tweet)
+    clean_tweet = gsub("[[:digit:]]", "", clean_tweet)
+    clean_tweet = gsub("http\\w+", "", clean_tweet)
+    clean_tweet = gsub("[ \t]{2,}", "", clean_tweet)
+    clean_tweet = gsub("^\\s+|\\s+$", "", clean_tweet)
+    clean_tweet <- str_replace_all(clean_tweet," "," ")
+    clean_tweet= gsub("http[^[:space:]]*", "", clean_tweet)
+    clean_tweet <- str_replace(clean_tweet,"RT @[a-z,A-Z]*: ","")
+    clean_tweet <- str_replace_all(clean_tweet,"#[a-z,A-Z]*","")
+    clean_tweet <- str_replace_all(clean_tweet,"@[a-z,A-Z]*","")
+    clean_tweet
+  }
+  
+  tweet1 <- searchTwitter(name3, n=samplesize, lang='en', since=date, until=date2)
+  tweets2 <- userTimeline(name3, n = 3200)
+  tweets1df <- twListToDF(tweet1)
+  tweets2df <- twListToDF(tweets2)
+  tweets1df[100, c("id", "created", "screenName", "replyToSN","favoriteCount", "retweetCount", "longitude", "latitude", "text")]
+  tweets2df[100, c("id", "created", "screenName", "replyToSN","favoriteCount", "retweetCount", "longitude", "latitude", "text")]
+
+  tweet1_txt <- sapply(tweet1, function(x) x$getText())
+  tweet1_txt=cleantweets(tweet1_txt)
+
+```
+#Twitter Sentiment Analysis: Marvel
+I choose the brand Marvel to perform a sentiment analysis via twitter. I choose Marvel because last week they released a trailer for their next Avengers movie: "infinity war" and Netflix released revelaed the season 2 premier date for Marvel’s Jessica Jones. All the data was collected from twitter by using their API functions "searchTwitter" and userTimeline. I gathered tweets by using the keyword "#marvel" and by searching the official @Marvel twitter page. After gathering the tweets, I cleaned them by making all words lower case, removing punctuations and digits, removing retweets "RTs" and also removing usernames. This way the sentiment analysis and the word cloud would be as accurate as possible. The markdown contains the following analysis, plots and tables:
+
+* Sentiment bar chart - breaks down tweets into different emotions
+* Sentiment line plot - shows overall sentiment trends from the past week
+* Top hashtags associated with the brand 
+* User statistics 
+    + Map to show where the people are tweeting about Marvel from 
+    + Histogram: tweets per hour
+    + Table: top tweeters of hashtag
+* Word cloud 
+* Emoji analysis
+
+##Sentiment Bar Chart
+```{r sentimentBarchart, echo=FALSE}
+sentimentPlotFunc=function(name, tweet_txt) {
+
+    mySentiment <- get_nrc_sentiment(tweet_txt)
+    tweets <- cbind(cleantweets(tweet_txt), mySentiment)
+    sentimentTotals <- data.frame(colSums(tweets[,c(2:11)]))
+
+    names(sentimentTotals) <- "count"
+    sentimentTotals <- cbind("sentiment" = rownames(sentimentTotals), sentimentTotals)
+    rownames(sentimentTotals) <- NULL
+
+    gtitle1<-paste("Total sentiment score on", name, "Tweets")
+
+    y = ggplot(data = sentimentTotals, aes(x = sentiment, y = count)) +
+      geom_bar(aes(fill = sentiment), stat = "identity") +
+      theme(legend.position = "none") +
+      xlab("Sentiment") + ylab("Total Count") + ggtitle(gtitle1) + coord_flip() +
+     geom_text(aes(label=count))
+
+    return(y)
+}
+sentimentPlotFunc(name3, tweet1_txt)
+
+```
+The overall sentiment towards Marvel seems to be positive, followed by surprise, trust and anticipation. The barchart was created using the "Syuzhet Package". This package includes a function called get_nrc_sentiment() which takes in the tweets (in the form of a character vector) and outputs a data frame a data frame where each row represents a sentence from the original file. The columns include one for each emotion type as well as a positive or negative valence. The ten columns are as follows: "anger", "anticipation", "disgust", "fear", "joy", "sadness", "surprise", "trust", "negative" and "positive." After attaining the sentiments, I use ggplot to create a bar plot to visualize the sentiment and the count.
+
+Thus, we can conclude that overall people have had a positive reaction to Marvel's new movie trailer. People are also surprised and in anticipation of the movie. This positive reaction indicates that the movie upon release will be successful.
+
+##Line Plot
+```{r linePlot, echo=FALSE, results="hide", message=FALSE}
+
+linePlotfunc=function(searchTerm, list) {
+    df <- twListToDF(list)
+    df <- df[, order(names(df))]
+    df$created <- strftime(df$created, '%Y-%m-%d')
+    if (file.exists(paste(searchTerm, '_stack.csv'))==FALSE) write.csv(df, file=paste(searchTerm, '_stack.csv'), row.names=F)
+
+     #merge last access with cumulative file and remove duplicates
+    stack <- read.csv(file=paste(searchTerm, '_stack.csv'))
+    stack <- rbind(stack, df)
+    stack <- subset(stack, !duplicated(stack$text))
+    write.csv(stack, file=paste(searchTerm, '_stack.csv'), row.names=F)
+
+    #evaluation tweets function
+    score.sentiment <- function(sentences, pos.words, neg.words, .progress='none') {
+      library("plyr")
+      library("stringr")
+      scores <- laply(sentences, function(sentence, pos.words, neg.words){
+
+        sentence <- iconv(sentence, "latin1", "ASCII//TRANSLIT")
+        sentence <- iconv(sentence, to='ASCII//TRANSLIT')
+
+        sentence <- gsub('[[:punct:]]', "", sentence)
+        sentence <- gsub('[[:cntrl:]]', "", sentence)
+        sentence <- gsub('\\d+', "", sentence)
+        sentence <- tolower(sentence)
+        word.list <- str_split(sentence, '\\s+')
+        words <- unlist(word.list)
+        pos.matches <- match(words, pos.words)
+        neg.matches <- match(words, neg.words)
+        pos.matches <- !is.na(pos.matches)
+        neg.matches <- !is.na(neg.matches)
+        score <- sum(pos.matches) - sum(neg.matches)
+        return(score)
+      }, pos.words, neg.words, .progress=.progress)
+      scores.df <- data.frame(score=scores, text=sentences)
+      return(scores.df)
+      detach("package:plyr", unload = TRUE)
+    }
+
+    library("ggplot2")
+    pos <- scan('http://ptrckprry.com/course/ssd/data/positive-words.txt', what='character', comment.char=';') #folder with positive dictionary
+    neg <- scan('http://ptrckprry.com/course/ssd/data/negative-words.txt', what='character', comment.char=';') #folder with negative dictionary
+
+    pos.words <- c(pos, 'nice', 'great','good')
+    neg.words <- c(neg, 'wtf', 'bad', 'horrible', 'fail')
+    Dataset <- stack
+    Dataset$text <- as.factor(Dataset$text)
+    scores <- score.sentiment(Dataset$text, pos.words, neg.words, .progress='text')
+    write.csv(scores, file=paste(searchTerm, '_scores.csv'), row.names=TRUE) #save evaluation results into the file
+    #total evaluation: positive / negative / neutral
+    stat <- scores
+    stat$created <- stack$created
+    stat$created <- as.Date(stat$created)
+    stat <- mutate(stat, tweet=ifelse(stat$score > 0, 'positive', ifelse(stat$score < 0, 'negative', 'neutral')))
+    require("dplyr")
+    by.tweet <- group_by(stat, tweet, created)
+    by.tweet <- summarise(by.tweet, number=n())
+    detach("package:dplyr", unload = TRUE)
+    write.csv(by.tweet, file=paste(searchTerm, '_opin.csv'), row.names=TRUE)
+    #create chart
+
+      y = (ggplot(by.tweet, aes(created,number)) + geom_line(aes(group=tweet, color=tweet), size=2) +
+             geom_point(aes(group=tweet, color=tweet), size=4) +
+             theme(text = element_text(size=18), axis.text.x = element_text(angle=90, vjust=1)) +
+             stat_summary(fun.y = 'sum', fun.ymin='sum', fun.ymax='sum', colour = 'black', size=2, geom = 'line') +
+             ggtitle(searchTerm) +
+             xlab("Date of Tweet") +
+             ylab("Sentiments")
+      )
+    return(y)
+}
+linePlotfunc(name3,tweet1)
+```
+After gathering and cleaning the data, the function stores the collected tweets in a "marvel_stack.csv" file
+```{r echo=FALSE}
+df <- read.csv(file="marvel _stack.csv",nrows=10)
+y <- head(df[15])
+y
+```
+The function score.sentiment then evaluates the tweets and determines if their sentiment is postivie, negative and neutral. This is done by scanning two files one filled with [positive words](http://ptrckprry.com/course/ssd/data/positive-words.txt) and the other with [negative words](http://ptrckprry.com/course/ssd/data/negative-words.txt). These scores are then saved in a "marvel _opin.csv" file. Then using ggplot, the scores are visualized on a line plot.
+
+The majority of the tweets last week seem to have a neutral sentiment followed by a positive. There was a spike in the numbers of tweets with the keyword "Marvel" on the sixth and again on the tenth, around when the trailers were released. Thus, we can conclude that the majority of people have had a positive reaction to Marvel's new Avenger's Infinity War movie trailer.
+
+
+
+Tweet  | Created | Number
+------ | ------- | -------
+Negative | 12/04/17 | 2
+Negative | 12/05/17 | 12
+Negative | 12/06/17 | 35
+Negative | 12/07/17 | 13
+Negative | 12/09/17 | 22
+Negative | 12/10/17 | 31
+Negative | 12/11/17 | 24
+Neutral | 12/04/17 | 154
+Neutral | 12/05/17 | 347
+Neutral | 12/06/17 | 875
+Neutral | 12/07/17 | 374
+Neutral | 12/09/17 | 458
+Neutral | 12/10/17 | 730
+Neutral | 12/11/17 | 748
+Neutral | 12/12/17 | 28
+Postive | 12/04/17 | 70
+Postive | 12/05/17 | 239
+Postive | 12/06/17 | 496
+Postive | 12/07/17 | 194
+Postive | 12/09/17 | 271
+Postive | 12/10/17 | 607
+Postive | 12/11/17 | 436
+Postive | 12/12/17 | 12
+
+##Top hashtags associated with the Brand
+```{r topHashtags, echo=FALSE}
+     text1<- tweets2df$text
+     extract.hashes = function(vec){
+       hash.pattern = "#[[:alpha:]]+"
+       have.hash = grep(x = vec, pattern = hash.pattern)
+
+       hash.matches = gregexpr(pattern = hash.pattern, text = vec[have.hash])
+       extracted.hash = regmatches(x = vec[have.hash], m = hash.matches)
+
+       df = data.frame(table(tolower(unlist(extracted.hash))))
+       colnames(df) = c("tag","freq")
+       df = df[order(df$freq,decreasing = TRUE),]
+       return(df)
+     }
+
+     temp1<- head(extract.hashes(text1),30)
+     temp2<- transform(temp1,tag = reorder(tag,freq))
+
+     y<- ggplot(temp2, aes(x = tag, y = freq)) + geom_bar(stat="identity", fill = "red") +
+             coord_flip() +
+             ggtitle("Top hashtags associated with Brand") +
+             xlab("Frequency") +
+             ylab("Hashtag")
+y
+```
+This is a ggplot of the top hashtags associated with the Marvel brand. They are mainly all releated to the franchise. In the top ten we see "ThorRanganok", "blackpanther" and "Agentsof Shield" (The latest three Marvel movies). With nearly all of the produced hashtags being related to the franchise, we see the extent of Marvel's network. This shows that there are so many other tweets and hashtags being used on twitter that can be traced back to the brand, meaning there are so many users talking about Marvel on twitter. This was calculated by taking the searched and cleaned tweets and extracting other hashtags in the same tweet. 
+
+#Map (geocoded tweets with keyword "Marvel")
+####Note: map takes a long-ish time to load since there are not a lot of geocoded tweets! Parsing through about 10000+ tweets
+```{r mapp, echo=FALSE,results="hide", message=FALSE}
+
+# United States
+map('world')
+test <- searchTwitter('marvel', n= 5000)
+dim(test)
+testdf <- twListToDF(test)
+testdf[100, c("id", "created", "screenName", "replyToSN","favoriteCount", "retweetCount", "longitude", "latitude", "text")]
+points(testdf$longitude,testdf$latitude,pch=20, cex =2, col="red")
+
+```
+It seems to be that the majority of tweets are originating from the United States, especially from the larger urban and more populated regions and cities. The majoring of the other worldwide tweets also seems to be originating from major cities across the globe. We cannot make precise conclusions from the map since so few tweets are geocoded. It does seem fitting however that they are mainly originating from large cities, since they have a higher population. Additionally, it is hard to say if the reason why the majority of the tweets are from the USA is because Marvel's brand is more popular here in America or whether more users in America enable location on their tweets. This was created ggmap and geocoded tweets (using latitude and longitude). 
+
+##Tweets per Hour
+```{r countt, echo=FALSE}
+count <- function(x){
+  test <- vector(mode = "numeric",length=0)
+  for (i in (1:length(x))){
+    one = strsplit(as.character(x[i]),' ')
+    one = one[[1]][2]
+    one = strsplit(one,":")
+    test = c(test,one[[1]][1])
+  }
+  return(test)
+  }
+hour1 <-count(tweets2df$created)
+tweets2df$hour1 <- hour1
+library(ggplot2)
+y <- ggplot(tweets2df,aes(x=hour1))+geom_bar(aes(y=(..count..))) +
+  ggtitle("Tweets per Hour") + xlab("Hour") + ylab("Count")
+y
+```
+This histogram shows at what time of the day are people tweeting about marvel! It seems that activity picks up in the evening around 5pm and continues till about 1am. This seems accurate as we can assume that most people would go on social media after their work day or at home in the night. The barplot was created using ggplot and the timestamp on the collected tweets. 
+
+##Top Tweeters of Hashtags
+```{r toptweeters, echo=FALSE, message=FALSE, warning=FALSE}
+toptweeters<-function(tweetlist) {
+    tweets <- unique(tweetlist)
+    # Make a table of the number of tweets per user
+    y <- as.data.frame(table(tweets$screenName)) 
+    #descending order according to frequency
+    y <- y[order(y$Freq, decreasing=T), ]
+    names(y) <- c("User","Tweets")
+    return (y)
+}
+
+ y <-toptweeters(tweets1df)
+ head(y,10)
+```
+The above table shows the top 10 twitter users that tweet using the hashtag #marvel most frequently. This was created by searching all the collected tweets and seeing if a user has tweeted using #marvel more than once.  
+
+##Word Cloud
+```{r wcloud, echo=FALSE, message=FALSE, warning=FALSE}
+
+wordcloudfunc=function(tweets.text){
+    tweets.text <- iconv(tweets.text, "latin1", "ASCII//TRANSLIT")
+    tweets.text <- iconv(tweets.text, to='ASCII//TRANSLIT')
+
+    #Replace @UserName
+    tweets.text <- gsub("@\\w+", "", tweets.text)
+    #Remove links
+    tweets.text <- gsub("http\\w+", "", tweets.text)
+
+    #create corpus
+    tweets.text.corpus <- Corpus(VectorSource(tweets.text))
+    #clean up by removing stop words
+    tweets.text.corpus <- tm_map(tweets.text.corpus, function(x)removeWords(x,stopwords()))
+
+    y = wordcloud(tweets.text.corpus,min.freq = 2, scale=c(7,0.5),colors=brewer.pal(8, "Dark2"),  random.color= TRUE, random.order = FALSE, max.words = 150)
+    return(y)
+}
+
+  wordcloudfunc(tweet1_txt)
+
+```
+After the initial process of extracting and cleaning the tweets, we use the text mining package (tm) to remove stop words. A stop word is a commonly used word such as “this”. To maintian accuracy, stop words should not be included in the analysis. Next, using the WordCloud package (wordcloud) I create a wordcloud. After "Marvel" (the largest word in the cloud), we have other words relating to the brand, the largest few being "avengers", "universe", "movie". In the word cloud, the larger the word, the more often it occurs. 
+
+
+##Emoji Analysis (From hamdanazhar)
+```{r emoji, results="hide", echo=FALSE}
+
+#part 1
+set.seed(20170202); ht <- "marvel";
+tweets.raw <- tweet1
+df <- twListToDF(strip_retweets(tweets.raw, strip_manual = TRUE, strip_mt = TRUE)); df$hashtag <- ht; df$created <- as.POSIXlt(df$created); df$text <- iconv(df$text, 'latin1', 'ASCII', 'byte'); df$url <- paste0('https://twitter.com/', df$screenName, '/status/', df$id); df <- rename(df, c(retweetCount = 'retweets'));
+df.a <- subset(df, select = c(text, created, url, latitude, longitude, retweets, hashtag));
+nrow(df.a); head(df.a);
+write.csv(df.a, paste0('marvel','.csv'), row.names = FALSE);
+tweets <- df; tweets$z <- 1; tweets$created <- as.POSIXlt(tweets$created); nrow(tweets); min(tweets$created); max(tweets$created); median(tweets$created);
+```
+
+
+```{r emojiChart, echo=FALSE, results="hide"}
+fnames <- c(
+  'marvel'
+);
+fnames <- paste0(fnames, '.csv'); df <- do.call(rbind.fill, lapply(fnames, read.csv));
+df$username <- substr(substr(df$url, 21, nchar(as.character(df$url))), 1, nchar(substr(df$url, 21, nchar(as.character(df$url))))-26);
+tweets.full <- df; tweets.full$X <- NULL; tweets.full$z <- 1;
+#### sanity checking
+tweets.full$created <- as.POSIXlt(tweets.full$created); min(tweets.full$created); max(tweets.full$created); median(tweets.full$created); nrow(tweets.full); length(unique(tweets.full$username))
+## dedupe dataset by url
+tweets.dupes <- tweets.full[duplicated(tweets.full$url), ]; nrow(tweets.full); nrow(tweets.dupes); # test <- subset(tweets.full, url %in% tweets.dupes$url); test <- test[with(test, order(url)), ];
+tweets <- tweets.full[!duplicated(tweets.full$url), ]; tweets <- arrange(tweets, url); row.names(tweets) <- NULL; tweets$tweetid <- as.numeric(row.names(tweets)); nrow(tweets);
+tweets.final <- tweets;
+## dedupe dataset by username
+# tweets.dupes <- tweets.full[duplicated(tweets.full$username), ]; nrow(tweets.full); nrow(tweets.dupes); # test <- subset(tweets, url %in% tweets.dupes$url); test <- test[with(test, order(url)), ];
+# tweets <- tweets.full[!duplicated(tweets.full$username), ]; tweets <- arrange(tweets, url); row.names(tweets) <- NULL; tweets$tweetid <- as.numeric(row.names(tweets)); nrow(tweets);
+
+#### READ IN EMOJI DICTIONARIES
+emdict.la <- read.csv('emoticon_conversion_noGraphic.csv', header = F); #Lauren Ancona; https://github.com/laurenancona/twimoji/tree/master/twitterEmojiProject
+emdict.la <- emdict.la[-1, ]; row.names(emdict.la) <- NULL; names(emdict.la) <- c('unicode', 'bytes', 'name'); emdict.la$emojiid <- row.names(emdict.la);
+emdict.jpb <- read.csv('emDict.csv', header = F) #Jessica Peterka-Bonetta; http://opiateforthemass.es/articles/emoticons-in-R/
+emdict.jpb <- emdict.jpb[-1, ]; row.names(emdict.jpb) <- NULL; names(emdict.jpb) <- c('name', 'bytes', 'rencoding'); emdict.jpb$name <- tolower(emdict.jpb$name);
+emdict.jpb$bytes <- NULL;
+## merge dictionaries
+emojis <- merge(emdict.la, emdict.jpb, by = 'name');  emojis$emojiid <- as.numeric(emojis$emojiid); emojis <- arrange(emojis, emojiid);
+
+###### FIND TOP EMOJIS FOR A GIVEN SUBSET OF THE DATA
+tweets <- tweets.final;
+# tweets <- subset(tweets.final, hashtag %in% c('#womensmarch'));
+## create full tweets by emojis matrix
+df.s <- matrix(NA, nrow = nrow(tweets), ncol = ncol(emojis));
+system.time(df.s <- sapply(emojis$rencoding, regexpr, tweets$text, ignore.case = T, useBytes = T));
+rownames(df.s) <- 1:nrow(df.s); colnames(df.s) <- 1:ncol(df.s); df.t <- data.frame(df.s); df.t$tweetid <- tweets$tweetid;
+# merge in hashtag data from original tweets dataset
+df.a <- subset(tweets, select = c(tweetid, hashtag));
+df.u <- merge(df.t, df.a, by = 'tweetid'); df.u$z <- 1; df.u <- arrange(df.u, tweetid);
+tweets.emojis.matrix <- df.u;
+## create emoji count dataset
+df <- subset(tweets.emojis.matrix)[, c(2:843)]; count <- colSums(df > -1);
+emojis.m <- cbind(count, emojis); emojis.m <- arrange(emojis.m, desc(count));
+emojis.count <- subset(emojis.m, count > 1); emojis.count$dens <- round(1000 * (emojis.count$count / nrow(tweets)), 1); emojis.count$dens.sm <- (emojis.count$count + 1) / (nrow(tweets) + 1);
+emojis.count$rank <- as.numeric(row.names(emojis.count));
+emojis.count.p <- subset(emojis.count, select = c(name, dens, count, rank));
+# print summary stats
+subset(emojis.count.p, rank <= 10);
+num.tweets <- nrow(tweets); df.t <- rowSums(tweets.emojis.matrix[, c(2:843)] > -1); num.tweets.with.emojis <- length(df.t[df.t > 0]); num.emojis <- sum(emojis.count$count);
+min(tweets$created); max(tweets$created); median(tweets$created);
+num.tweets; num.tweets.with.emojis; round(100 * (num.tweets.with.emojis / num.tweets), 1); num.emojis; nrow(emojis.count);
+
+##### MAKE BAR CHART OF TOP EMOJIS IN NEW DATASET
+df.plot <- subset(emojis.count.p, rank <= 10); xlab <- 'Rank'; ylab <- 'Overall Frequency (per 1,000 Tweets)';
+setwd("./ios_9_3_emoji_files")
+df.plot <- arrange(df.plot, name);
+imgs <- lapply(paste0(df.plot$name, '.png'), png::readPNG); g <- lapply(imgs, grid::rasterGrob);
+k <- 0.20 * (10/nrow(df.plot)) * max(df.plot$dens); df.plot$xsize <- k; df.plot$ysize <- k; #df.plot$xsize <- k * (df.plot$dens / max(df.plot$dens)); df.plot$ysize <- k * (df.plot$dens / max(df.plot$dens));
+df.plot <- arrange(df.plot, name);
+g1 <- ggplot(data = df.plot, aes(x = rank, y = dens)) +
+  geom_bar(stat = 'identity', fill = 'dodgerblue4') +
+  xlab(xlab) + ylab(ylab) +
+  mapply(function(x, y, i) {
+    annotation_custom(g[[i]], xmin = x-0.5*df.plot$xsize[i], xmax = x+0.5*df.plot$xsize[i],
+                      ymin = y-0.5*df.plot$ysize[i], ymax = y+0.5*df.plot$ysize[i])},
+    df.plot$rank, df.plot$dens, seq_len(nrow(df.plot))) +
+  scale_x_continuous(expand = c(0, 0), breaks = seq(1, nrow(df.plot), 1), labels = seq(1, nrow(df.plot), 1)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 1.10 * max(df.plot$dens))) +
+  theme(panel.grid.minor.y = element_blank(),
+        axis.title.x = element_text(size = 10), axis.title.y = element_text(size = 14),
+        axis.text.x  = element_text(size = 8, colour = 'black'), axis.text.y  = element_text(size = 8, colour = 'black'));
+g1;
+setwd("./")
+png(paste0('emoji_barchart_', as.Date(min(tweets$created)), '_', as.Date(max(tweets$created)), '_', Sys.Date(), '_', format(Sys.time(), '%H-%M-%S'), '_n', nrow(tweets), '.png'),
+    width = 6600, height = 4000, units = 'px', res = 1000);
+g1; dev.off();
+```
+I used the the PRISMOJI code shown to us in lecture to conduct the following emoji analysis of Marvel. We gathered and cleaned tweets from above are again used to conduct the analysis. 
+Part 2 ✍🏼: Using Unicode pattern matching to extract emojis from tweets
+Part 3 📊: Visualizing emojis (Basic)
+
+
+```{r echo=FALSE}
+y <- df.plot[1:4]
+y 
+```
+
+name          |          dens|  count| rank 
+------ |                ------- | ------- | -------
+face with tears of joy|  5.3  |   3 |  1
+fire              |      3.5  |   2 |   9 
+flexed biceps      |     3.5 |    2  |  5
+heavy black heart   |    3.5 |  2 |   3
+loudly crying face  |    3.5 |    2 |   2 
+mobile phone        |    3.5   |  2  |  7
+personal computer   |    3.5   |  2 |   6 
+radio               |    3.5 |   2  |  8 
+registered sign     |    3.5 |    2 |   4
