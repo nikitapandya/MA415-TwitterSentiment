@@ -51,10 +51,10 @@ ui <-fluidPage(theme = shinytheme("readable"),
 server <- function(input, output) {
   
   #TWITTER OAUTH ---------------------------------------------------
-  consumerKey <- ''
-  consumerSecret <- ''
-  access_token <- ''
-  access_secret <- ''
+  consumerKey <- 'YOUR KEY HERE'
+  consumerSecret <- 'YOUR KEY HERE'
+  access_token <- 'YOUR KEY HERE'
+  access_secret <- 'YOUR KEY HERE'
   accessURL="https://api.twitter.com/oauth/access_token"
   authURL="https://api.twitter.com/oauth/authorize"
   reqURL="https://api.twitter.com/oauth/request_token"
